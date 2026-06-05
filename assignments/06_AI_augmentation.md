@@ -4,8 +4,8 @@ This week's assignments cover the week 6 material, including:
 
 - LLM augmentation: prompt engineering, fine-tuning, and RAG
 - Keyword-based RAG
-- Semantic RAG with embeddings and vector search
-- LlamaIndex as a production-ready RAG framework
+- Semantic RAG concepts: embeddings, chunking, and cosine similarity
+- LlamaIndex: building and evaluating a semantic RAG pipeline
 
 As with previous weeks, Part 1 is a set of warmup exercises to practice the core concepts and tools. Part 2 is a mini-project where you will build a complete RAG-powered Q&A assistant from scratch.
 
