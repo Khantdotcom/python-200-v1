@@ -1,27 +1,26 @@
-# Week 4: Machine Learning: Deep Learning
-Welcome to Week 4 of Python 200! This week we will explore the world of deep learning, a powerful subset of machine learning that uses neural networks to recognize complex patterns in data. This is probably the most ambitious week of the course, but also one of the most exciting.
+# Week 4: Applied Machine Learning
 
-Deep learning is the foundation of all modern AI systems like ChatGPT (text-based LLMs), DALL-E (image-generating AI), and many others. By understanding deep learning, you will gain insights into how these systems work and how to help build pipelines and applications that leverage them. The focus is on building intuition and understanding -- not deep mathematical theory.
+Welcome to Week 4! Over the past two weeks you trained classifiers and evaluated them using accuracy, precision, recall, F1, and the confusion matrix. Those tools are essential — but they leave two important questions unanswered.
 
-Lessons are structured a bit differently this week. The standard markdown page introduces the lesson, but the main work is happening in Juptyer notebooks. Each lesson landing page has an "Open in Kaggle" button that loads the notebook directly into your account -- the notebooks live in `resources/notebooks/` and are named to match their lesson. This lets us sidestep the complex installation issues that arise with GPU-based computation. Kaggle provides 30 hours of free GPU time per week, which is more than enough for this course.
+The first question is **how do you know if 0.5 is the right decision threshold?** Every classifier we have built outputs a probability, and we have always converted that to a prediction by asking "is the probability above 0.5?" That cutoff is a convention, not a law. Depending on what kind of errors you can tolerate, a different threshold might serve you better. This week introduces a tool — the ROC curve — that lets you visualize your classifier's behavior across every possible threshold at once, and a single summary metric, AUC, that captures model quality independently of any threshold choice.
 
-> If you want to install PyTorch on your own machine for practice, you can find out how at their [official installation page](https://pytorch.org/get-started/locally/). Just bear in mind that your mentors won't be able to provide support for debugging local PyTorch issues. 
+The second question is **how do you actually use a trained model?** So far, every script we have written trains a model and immediately uses it in the same session. In a real project, training and prediction happen at different times, in different scripts, or on different machines. A model needs to be saved to disk after training and loaded later for use. This week introduces `joblib`, the standard tool for this, and shows why saving the entire preprocessing pipeline — not just the model weights — is the right approach.
+
+In between, the week covers one more skill that pays for itself immediately: **systematic hyperparameter tuning with GridSearchCV**. Rather than guessing a value for `k` or `C` and hoping for the best, GridSearchCV automates the search by evaluating every candidate in a grid using cross-validation and surfaces the best configuration with a single call.
+
+The running example throughout the week is a weather classifier: a model that takes daily weather features and predicts whether conditions are good for an outdoor run. You will build this classifier, tune it, and save it to disk. In later weeks, that saved file becomes a reusable pipeline component — a concrete first step toward the end-to-end data pipeline you will build by the end of the course.
 
 ## Topics
-1. [Introduction to neural networks and deep learning](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/04_ML_deep_learning/01_deep_intro.md)
-A brief introduction to neural networks and deep learning. What are they, how do they work, how do they learn?
 
-2. [Introduction to pytorch](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/04_ML_deep_learning/02_pytorch_intro.md)
-An overview of the PyTorch library, mainly focusing on tensor operations (in the world of deep learning, they use the word "tensor" instead of "array", but it's still just arrays of numbers like we saw with NumPy).
+1. [ROC Curves and AUC](./01_roc_auc.md)
+Beyond accuracy: understanding the threshold problem, visualizing classifier performance with ROC curves, and using AUC to compare models without committing to a single cutoff.
 
-3. [Training your first neural network](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/04_ML_deep_learning/03_first_neural_network.md)
-Before diving into more complex models, we will start by training a simple neural network in PyTorch to gain an understanding of the basic workflow for training and evaluating a model -- a workflow that carries over to much more complex architectures.
+2. [Hyperparameter Tuning with GridSearchCV](./02_gridsearch.md)
+Systematic hyperparameter search using cross-validated grid search. Covers `GridSearchCV`, `param_grid`, `best_params_`, and how to combine a Pipeline with a grid search for a clean, reproducible tuning workflow.
 
-4. [Machine vision intro](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/04_ML_deep_learning/04_cnn_inference.md)
-For this section, we will use a pre-trained convolutional neural network (CNN) to classify images. We use this to show how deep neural networks can be used for computer vision tasks.
-
-5. [Transfer learning](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/04_ML_deep_learning/05_transfer_learning.md)
-You rarely train a complex neural network from scratch. Here, we will explore *transfer learning*, in which a neural network trained on one task is fine-tuned on a similar task, but requires much less data. Many deep-learning pipelines are really just transfer learning pipelines under the hood.
+3. [Model Persistence with joblib](./03_model_persistence.md)
+Saving a trained model to disk with `joblib.dump` and loading it in a separate script with `joblib.load`. Covers why you should serialize the full sklearn Pipeline rather than the model alone, and what to document to keep a saved model usable over time.
 
 ## Week 4 Assignments
-Once you finish the lessons, continue below to the assignment for this week.
+
+Once you finish the lessons, head to the [assignments](../../assignments/README.md) to practice these skills and build the weather classifier you will reuse later in the course.
