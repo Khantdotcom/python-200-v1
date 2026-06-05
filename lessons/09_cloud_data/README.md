@@ -1,19 +1,19 @@
 # Week 9: Data in the Cloud
 
-In Week 8 you got your Azure environment set up -- portal access, Cloud Shell, the Azure CLI, and SSH keys. This week you take the next step: writing Python that talks directly to Azure.
+In Week 8 you learned how cloud platforms work: the IaaS/PaaS/SaaS model, the economics of managed services, and the conceptual difference between compute and storage. This week you put that into practice by writing Python that stores and retrieves data in the cloud.
 
-The goal is to add cloud storage to the pipeline toolkit you have been building all course. By the end of the week, you will be able to authenticate a Python script to Azure, read and write files in Blob Storage, and build a simple pipeline that extracts data from a public API and loads it into the cloud. That Extract + Load pattern is the foundation of the capstone pipeline you will build in Week 11.
+The service you will use is [Supabase](https://supabase.com) — a hosted Postgres database with a clean Python SDK. By the end of the week you will be able to connect a Python script to a cloud database, design a schema, read and write rows using the supabase-py SDK, and build an Extract + Load pipeline that pulls a year of daily weather data from a public API and upserts it into the cloud. The data you load this week feeds directly into the transform and enrichment steps in weeks 10 and 11.
 
 ## Topics
 
-1. [Connecting to Supabase](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/09_cloud_data/01_connecting_Supabase.md)
-Python scripts cannot type a password -- they need a different authentication strategy. This lesson introduces the azure-identity package and DefaultAzureCredential, which handles authentication automatically based on your environment. You will verify the connection by printing your subscription name.
+1. [Connecting to Supabase from Python](./01_connecting_supabase.md)
+Python scripts need credentials to talk to a cloud database — but those credentials must never be hardcoded in source code. This lesson introduces Supabase, walks through creating a project and retrieving your credentials, and shows how to store secrets safely using environment variables. You will verify your connection with a simple Python script.
 
-2. [Supabase Tables](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/09_cloud_data/02_blob_storage.md)
-Blob Storage is Azure's service for storing files in the cloud -- CSVs, JSON exports, images, model artifacts, anything a pipeline might produce or consume. This lesson covers the account to container to blob hierarchy and walks through the full set of CRUD operations using the azure-storage-blob SDK.
+2. [Working with Tables using supabase-py](./02_supabase_tables.md)
+With a connection established, you need somewhere to put data. This lesson introduces the two-table schema for the rest of the course — `weather_raw` for raw API data and `weather_enriched` for ML classifier and LLM output — and walks through the full set of CRUD operations using the supabase-py fluent API. All writes use `upsert` with `on_conflict="date"` so every pipeline run is idempotent.
 
-3. [Loading Pipeline Data to Blob Storage](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/09_cloud_data/03_loading_pipeline.md)
-Pulls everything together into a realistic pipeline step: extract data from a REST API, serialize it, upload it to Blob Storage at a structured path, and read it back into a pandas DataFrame. This is the Extract + Load skeleton you will build on in Weeks 10 and 11.
+3. [The Extract + Load Pipeline](./03_loading_pipeline.md)
+Puts it all together: fetch a year of daily weather data from the Open-Meteo historical archive API, shape the records, and upsert them into `weather_raw`. This is the Extract + Load skeleton you will build on in weeks 10 and 11, when the double-transform step is added.
 
 ## Week 9 Assignments
 
