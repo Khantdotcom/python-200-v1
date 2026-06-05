@@ -1,24 +1,29 @@
 # Week 11 Assignment: Cloud ETL Capstone
 
-This is the capstone project for Python 200. You have spent ten weeks building toward this: a cloud ETL pipeline that extracts data from a live API, transforms it with a language model, loads the results to Azure Blob Storage, and runs the whole thing as an orchestrated, observable Prefect flow. This week you build it yourself.
+This is the capstone project for Python 200. You have spent ten weeks building toward this: a cloud ETL pipeline that extracts weather data from a live API, transforms it with an ML classifier and an LLM, loads the results to Supabase, and runs the whole thing as an orchestrated, observable Prefect flow. This week you build it yourself.
 
 The warmup checks your understanding of Prefect and production patterns. The project is the pipeline.
+
+---
 
 # Submission Instructions
 
 In your `python200-homework` repository, create a folder called `assignments_11/`. Inside that folder, create:
 
-1. `warmup_11.py` -- warmup exercises (conceptual answers as comments, code as requested)
-2. `etl_pipeline.py` -- the complete ETL pipeline
-3. `outputs/pipeline_run.md` -- a short written reflection on your run
+1. `warmup_11.py` — warmup exercises (conceptual answers as comments, code as requested)
+2. `etl_pipeline.py` — the complete ETL pipeline
+3. `models/` — copy your `weather_classifier.pkl` and `weather_classifier_metadata.json` from Week 4 here
+4. `outputs/pipeline_run.md` — a short written reflection on your run
 
 When finished, commit and open a PR as described in the [assignments README](README.md).
 
-**Setup reminder:** You will need `az login` active for Blob Storage, an OpenAI API key in `.env`, and the Prefect server running in a separate terminal when you test your pipeline.
+**Prerequisites:** Your Week 9 project must have run and populated `weather_raw` before running this pipeline. Your Week 4 model files must be present in `models/`.
 
 ```bash
-uv pip install prefect requests openai python-dotenv azure-storage-blob azure-identity pandas
+uv pip install prefect requests openai python-dotenv supabase joblib scikit-learn pandas
 ```
+
+---
 
 # Part 1: Warmup
 
@@ -28,15 +33,15 @@ Put all warmup answers in `warmup_11.py`. Use comments to mark each section and 
 
 ### Prefect Question 1
 
-In a comment block, answer: what is the difference between a `@task` and a `@flow` in Prefect? You have a helper function that converts a temperature from Celsius to Fahrenheit -- a pure, in-memory calculation with no I/O. Would you decorate it with `@task`? Why or why not?
+In a comment block, answer: what is the difference between a `@task` and a `@flow` in Prefect? You have a helper function that converts a temperature from Celsius to Fahrenheit — a pure, in-memory calculation with no I/O. Would you decorate it with `@task`? Why or why not?
 
 ### Prefect Question 2
 
-Write the decorator (just the decorator line, not the full function) for a task named `call_api` that retries up to 3 times with a 30-second delay between attempts.
+Write just the decorator line for a task named `call_api` that retries up to 3 times with a 30-second delay between attempts.
 
 ### Prefect Question 3
 
-You run your pipeline and the Prefect UI shows: `extract` is *Completed*, `transform` is *Failed*, `load` never ran. In a comment block, describe: where in the UI do you look to understand what went wrong, and what specific information would you expect to find there?
+You run your pipeline and the Prefect UI shows: `extract` is *Completed*, `load_raw` is *Completed*, `transform` is *Failed*, `load_enriched` never ran. In a comment block, describe: where in the UI do you look to understand what went wrong, and what specific information would you expect to find there?
 
 ## Production Patterns
 
@@ -46,81 +51,90 @@ In a comment block, explain what `raise_for_status()` does and why it is better 
 
 ### Production Question 2
 
-Your pipeline uploads results to `final/{today}/weather_etl.json` with `overwrite=True`. The pipeline crashes halfway through the transform step. You fix the bug and re-run it from the beginning. In a comment block, explain: what does `overwrite=True` protect you from in this scenario, and what would happen without it?
+Your `load_raw` task uses `upsert` with `on_conflict="date"` instead of `insert`. The pipeline crashes halfway through the transform step. You fix the bug and re-run from the beginning. In a comment block, explain: what does `upsert` protect you from in this scenario, and what would happen if you had used plain `insert` instead?
 
 ### Production Question 3
 
-Write a task stub -- just the function signature, decorator, and a single log line -- that uses `get_run_logger()` to log an INFO message saying how many records were loaded. The function should accept `records` (a list) and `blob_path` (a string) as arguments.
+Write a task stub — just the function signature, decorator, and a single log line — that uses `get_run_logger()` to log an INFO message saying how many enrichment records were upserted. The function should accept `enrichment_records` (a list) as its argument.
 
-# Part 2: Project -- Full ETL Pipeline
+### Production Question 4
 
-Build `etl_pipeline.py`: a complete Prefect flow with three tasks that orchestrate the full Extract, Transform, Load pipeline. This is the capstone -- write it yourself using the lessons as a guide, not as code to copy.
+In a comment block, explain how the incremental processing check in the transform task contributes to idempotency. If you removed it and the pipeline ran the ML and LLM steps on all 365 records every time, what would be the practical consequences (in terms of cost, time, and data correctness)?
+
+---
+
+# Part 2: Project — Full ETL Pipeline
+
+Build `etl_pipeline.py`: a complete Prefect flow with four tasks that orchestrate the full Extract + Load + Transform + Load pipeline. Write it yourself using the lessons as a guide, not as code to copy verbatim. The requirements below specify what each task must do; the implementation is yours.
 
 ## Requirements
 
-### Extract task
+### extract task
 
-- Decorated with `@task(retries=2, retry_delay_seconds=10)`
-- Calls the Open-Meteo API for 7 days of hourly `temperature_2m` and `precipitation` data for a city of your choosing
+- `@task(retries=2, retry_delay_seconds=10)`
+- Calls the Open-Meteo historical archive API to fetch 2023 daily weather data for a city of your choice, using the same four variables as Week 4
 - Uses `raise_for_status()`
-- Returns the raw JSON response as a dict
-- Prints a confirmation message
+- Converts the columnar API response into a list of row dictionaries
+- Prints a confirmation with the record count
+- Returns the list of row dicts
 
-### Transform task
+### load_raw task
 
-- Decorated with `@task`
-- Reshapes the `"hourly"` parallel lists into individual per-hour records
-- Classifies the first 24 records (one day) using the OpenAI API with this system prompt:
+- `@task(retries=2, retry_delay_seconds=5)`
+- Upserts the raw records into `weather_raw` using `on_conflict="date"`
+- Prints a confirmation with the upserted row count
 
-```text
-You are classifying hourly weather conditions for outdoor running.
-Given a temperature in Celsius and a precipitation amount in mm,
-classify the conditions as exactly one of: good, marginal, or bad.
-Reply with that one word only -- no punctuation, no explanation.
-```
+### transform task
 
-- Falls back to `"unknown"` if the model returns an unexpected response
-- Prints a progress message every 6 records
-- Returns the list of enriched records
+- `@task`
+- Performs an incremental check: fetches dates already in `weather_enriched` and skips them
+- Loads the saved sklearn Pipeline from `models/weather_classifier.pkl`
+- Loads feature names from `models/weather_classifier_metadata.json`
+- Runs `predict` and `predict_proba` on the unprocessed records
+- Calls the OpenAI API to generate a one-sentence recommendation for each record
+- Handles LLM errors gracefully with a fallback string
+- Prints progress every 50 records
+- Returns the complete list of enrichment records
 
-### Load task
+### load_enriched task
 
-- Decorated with `@task`
-- Uploads the enriched records as JSON to `final/<today>/weather_etl.json` in your `pipeline-data` container
-- Uses `overwrite=True`
-- Prints a confirmation with the blob path and byte count
+- `@task(retries=2, retry_delay_seconds=5)`
+- Guards against an empty list (prints a message and returns early if nothing to load)
+- Upserts enrichment records into `weather_enriched` using `on_conflict="date"`
+- Prints a confirmation with the upserted row count
 
 ### Flow
 
-- Decorated with `@flow(log_prints=True)`
-- Calls the three tasks in order
-- Prints a completion message with the final blob path
+- `@flow(log_prints=True)`
+- Calls all four tasks in the correct order
+- Prints a final completion message
 
 ## Running and Verifying
 
 1. Start the Prefect server: `prefect server start`
 2. Run your pipeline: `python etl_pipeline.py`
-3. Open `http://localhost:4200` and verify all three tasks show *Completed*
-4. Navigate to your storage account in the Azure Portal and confirm the blob exists at `pipeline-data/final/<today>/weather_etl.json`
+3. Open `http://localhost:4200` and verify all four tasks show *Completed*
+4. Confirm the data in the Supabase dashboard: `weather_raw` should have 365 rows, `weather_enriched` should have at least as many
 
 ## Reflection
 
-Write `outputs/pipeline_run.md` with a short reflection (4-6 sentences) covering:
+Write `outputs/pipeline_run.md` with a short reflection (5–7 sentences) covering:
 
 - Did the pipeline run cleanly on the first try? If not, what failed and how did you fix it?
-- What did the Prefect UI show? Were there any retries?
-- What is one thing you would change or add if you were deploying this pipeline to run on a daily schedule?
+- What did the Prefect UI show? Did any tasks retry?
+- Look at a few rows in `weather_enriched`. Do the LLM summaries seem accurate and useful? Pick one that stands out (positively or negatively) and explain why.
+- What is one thing you would change or add if you were deploying this pipeline to run on a daily schedule — fetching the previous day's forecast each morning and enriching it automatically?
 
 ## Video
 
-Record a short video (target: 3-4 minutes, max: 5). Show:
+Record a short video (target: 4 minutes, max: 6). Show:
 
-1. The pipeline running in your terminal to completion
-2. The Prefect UI with all three tasks in *Completed* state, and the logs from at least one task
-3. The final blob in the Azure Portal under `pipeline-data/final/<date>/`
+1. The pipeline running in your terminal to completion, with progress output visible
+2. The Prefect UI with all four tasks in *Completed* state, and the logs from the transform task
+3. The `weather_enriched` table in your Supabase dashboard with rows visible, including the `llm_summary` column
 
 Paste the video link in a comment at the top of `etl_pipeline.py`.
 
 ---
 
-Congratulations! With this step, you've finished Python for Cloud & AI.
+Congratulations! With this step, you have finished Python for Cloud & AI. You built a full cloud ETL pipeline from scratch — extract, transform with an ML model and an LLM, load to a cloud database, orchestrated and observable with Prefect. That is a genuinely production-relevant workflow.

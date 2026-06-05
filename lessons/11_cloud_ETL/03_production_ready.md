@@ -1,33 +1,33 @@
 # Making Pipelines Production-Ready
 
-The pipeline you built in the previous lesson works. If everything goes right, it extracts, transforms, and loads without issue. But "everything going right" is an optimistic assumption for a pipeline that depends on two external APIs and a cloud storage service. This lesson covers four patterns that make your pipeline reliable -- not just correct.
+The pipeline you built in the previous lesson works. If everything goes right, it extracts, transforms, and loads without issue. But "everything going right" is an optimistic assumption for a pipeline that depends on two external APIs and a cloud database. This lesson covers four patterns that make your pipeline reliable — not just correct.
 
-These patterns are extremely common in real-world data engineering. Most production pipeline work is not about writing complicated algorithms -- it is about making systems dependable, observable, and safe to re-run.
+These patterns are extremely common in real-world data engineering. Most production pipeline work is not about writing complicated algorithms — it is about making systems dependable, observable, and safe to re-run.
 
 For reference:
 
-* [Prefect retries documentation](https://docs.prefect.io/v3/concepts/tasks#retries)
-* [Prefect logging documentation](https://docs.prefect.io/v3/develop/logging)
-* [What is idempotency?](https://blog.postman.com/what-is-idempotency/)
+- [Prefect retries documentation](https://docs.prefect.io/v3/concepts/tasks#retries)
+- [Prefect logging documentation](https://docs.prefect.io/v3/develop/logging)
+- [What is idempotency?](https://blog.postman.com/what-is-idempotency/)
 
 ## Learning Objectives
 
 By the end of this lesson, you will be able to:
 
-* Explain why transient failures are inevitable in cloud pipelines and how retries address them
-* Use `raise_for_status()` to propagate errors cleanly through a Prefect flow
-* Apply `log_prints=True` and `get_run_logger()` to produce useful logs
-* Explain idempotency and how `overwrite=True` and date-based blob paths support it
+- Explain why transient failures are inevitable in cloud pipelines and how retries address them
+- Use `raise_for_status()` to propagate errors cleanly through a Prefect flow
+- Apply `log_prints=True` and `get_run_logger()` to produce useful structured logs
+- Explain idempotency and how `upsert` with `on_conflict` and the incremental check support it
 
 ## Retries
 
-External API calls fail sometimes. Rate limit responses, brief network timeouts, momentary service unavailability -- none of these are bugs in your code, but they will crash your pipeline if you do not account for them.
+External API calls fail sometimes. Rate limit responses, brief network timeouts, momentary service unavailability — none of these are bugs in your code, but they will crash your pipeline if you do not account for them.
 
-Prefect's retry mechanism handles this cleanly. You already added it to the extract task in the previous lesson:
+Prefect's retry mechanism handles this cleanly. Adding `retries` and `retry_delay_seconds` to a task decorator is all it takes:
 
-```python id="1e4pqa"
+```python
 @task(retries=2, retry_delay_seconds=10)
-def extract(latitude: float, longitude: float) -> dict:
+def extract() -> list:
     ...
 ```
 
@@ -37,38 +37,33 @@ In the Prefect UI, you will see the task cycle through multiple attempts before 
 
 Retries are especially useful for operations that depend on external systems:
 
-* API calls
-* Blob Storage uploads/downloads
-* database connections
-* cloud authentication requests
+- API calls (Open-Meteo, OpenAI)
+- Database connections and writes (Supabase)
+- Cloud authentication requests
 
 These systems occasionally fail for reasons outside your control, and a retry often fixes the problem automatically.
 
 A useful rule of thumb:
 
-* use retries for transient external failures
-* do **not** use retries for genuine programming bugs
+- Use retries for transient external failures.
+- Do **not** use retries for genuine programming bugs.
 
-If your code has a syntax error or a broken loop, retrying will not help -- it only delays the inevitable failure and makes debugging noisier.
-
-Two or three retries with a 10-30 second delay is a very common production default.
+If your code has a logic error or a broken loop, retrying will not help — it only delays the inevitable failure and makes debugging noisier. Two or three retries with a 10–30 second delay is a very common production default.
 
 ## Error Handling
 
 `raise_for_status()` is a small habit with a large payoff. Compare these two patterns:
 
-```python id="t1k65j"
-# Silent failure -- the pipeline continues with bad data
+```python
+# Silent failure — the pipeline continues with bad data
 response = requests.get(url)
-
 if response.status_code != 200:
     print("Something went wrong")
 ```
 
-```python id="p8ye6s"
-# Loud failure -- Prefect catches the exception and marks the task Failed
+```python
+# Loud failure — Prefect catches the exception and marks the task Failed
 response = requests.get(url)
-
 response.raise_for_status()
 ```
 
@@ -76,12 +71,12 @@ In the first version, if the API returns a 404 or 500, the pipeline continues wi
 
 In the second version, the exception propagates immediately:
 
-* Prefect marks the task as *Failed*
-* the error appears clearly in the logs
-* downstream tasks do not run
-* the bad data never gets written
+- Prefect marks the task as *Failed*
+- The error appears clearly in the logs
+- Downstream tasks do not run
+- The bad data never gets written
 
-The general principle is simple:
+The general principle:
 
 > In data pipelines, visible failures are usually safer than silent corruption.
 
@@ -89,116 +84,103 @@ A failed run is inconvenient, but incorrect data silently flowing through a syst
 
 ## Logging
 
-You already have `log_prints=True` on your flow, which captures all `print()` output as Prefect log entries. For many small pipelines, this is enough.
+You already have `log_prints=True` on your flow, which captures all `print()` output as Prefect log entries. For many small pipelines, this is enough:
 
-For example:
-
-```python id="dr8j7f"
-print("Classified 6/24 records")
+```python
+print(f"Upserted {len(records)} rows into weather_raw")
 ```
 
-will appear automatically in the Prefect UI logs.
+This will appear automatically in the Prefect UI logs.
 
-For more structured logging -- with severity levels -- use `get_run_logger()` inside a task:
+For more structured logging — with severity levels — use `get_run_logger()` inside a task:
 
-```python id="g0lfm5"
+```python
 from prefect.logging import get_run_logger
 
 @task
-def load(records: list, blob_path: str) -> None:
+def load_enriched(enrichment_records: list) -> None:
     logger = get_run_logger()
+    logger.info(f"Upserting {len(enrichment_records)} enrichment records")
 
-    logger.info(
-        f"Loaded {len(records)} records to {blob_path}"
+    if not enrichment_records:
+        logger.warning("No enrichment records to load — transform task may have found nothing to process")
+        return
+
+    response = (
+        supabase.table("weather_enriched")
+        .upsert(enrichment_records, on_conflict="date")
+        .execute()
     )
+    logger.info(f"Upserted {len(response.data)} rows into weather_enriched")
 ```
 
 Structured logs are useful because they can be filtered and searched more easily across many runs.
 
 Common logging levels:
 
-* `logger.info()` → routine progress updates
-* `logger.warning()` → something unusual but non-fatal
-* `logger.error()` → a serious problem or failure
-
-For example, `"unknown"` model classifications might deserve a warning log but probably should not crash the entire pipeline.
+- `logger.info()` — routine progress updates
+- `logger.warning()` — something unusual but non-fatal (e.g., LLM returned an unexpected format)
+- `logger.error()` — a serious problem (e.g., authentication failed after retries)
 
 Good logging becomes more important as pipelines grow larger and run automatically on schedules. When something breaks overnight, logs are often the first place engineers look.
 
 ## Idempotency
 
-A pipeline is *idempotent* if running it twice produces the same result as running it once.
+A pipeline is *idempotent* if running it multiple times produces the same result as running it once.
 
 This matters because pipelines frequently get re-run:
 
-* after a retry
-* after fixing a bug
-* after a deployment failure
-* after an infrastructure outage
+- After a retry
+- After fixing a bug
+- After a partial failure mid-run
+- After an infrastructure outage
 
-The load task already handles this with `overwrite=True`:
+Your pipeline already handles this in two places.
 
-```python id="5j3hjr"
-container.upload_blob(
-    blob_path,
-    payload,
-    overwrite=True
-)
+**Upsert with `on_conflict`** in the load tasks:
+
+```python
+supabase.table("weather_raw").upsert(records, on_conflict="date").execute()
+supabase.table("weather_enriched").upsert(enrichment_records, on_conflict="date").execute()
 ```
 
-Without `overwrite=True`, a second run would fail because the blob already exists.
+Re-running either load task updates existing rows in place rather than failing or duplicating them. The database always ends up in a consistent state regardless of how many times the load runs.
 
-With it, the pipeline safely replaces the previous output with the updated result.
+**The incremental check** in the transform task:
 
-This makes the pipeline much safer to re-run during debugging or recovery.
-
-The blob path pattern also helps:
-
-```python id="5aqz0j"
-final/{today}/weather_etl.json
+```python
+already_done = {r["date"] for r in supabase.table("weather_enriched").select("date").execute().data}
+to_process   = [r for r in raw_records if r["date"] not in already_done]
 ```
 
-Each day's data is stored in its own folder, so rerunning today's pipeline does not overwrite yesterday's results.
+If the pipeline crashes during the LLM enrichment step after processing 200 of 365 records, re-running picks up from record 201 — not from the beginning. The 200 already-written records in `weather_enriched` are detected and skipped. This matters for LLM calls especially: re-processing records you have already paid for is waste.
 
-This pattern -- partitioning data by date -- is extremely common in production data systems because it keeps historical runs isolated and easier to manage.
+Together, these two patterns mean re-running the pipeline after any failure is always safe. No manual cleanup, no duplicate rows, no extra API costs for records already processed.
 
 ## What Comes Next
 
 The pipeline you built runs locally when you execute:
 
-```bash id="2tnwth"
+```bash
 python etl_pipeline.py
 ```
 
-In a real production environment, pipelines are usually scheduled automatically -- for example:
+In a real production environment, pipelines are usually scheduled automatically — for example, every morning at 6am, or every night after business hours. Prefect supports this through *deployments*, which package your flow configuration and scheduling rules. A Prefect *worker* then executes the flow automatically according to that schedule.
 
-* every morning at 6am
-* every hour
-* every night after business hours
+[Prefect Cloud](https://www.prefect.io/cloud) provides a hosted version of this infrastructure with additional monitoring, alerting, and collaboration features. The [Prefect documentation on deployments](https://docs.prefect.io/v3/deploy/index) covers the full setup.
 
-Prefect supports this through *deployments*, which package your flow configuration and scheduling rules. A Prefect *worker* then executes the flow automatically according to that schedule.
-
-[Prefect Cloud](https://www.prefect.io/cloud) provides a hosted version of this infrastructure with additional monitoring, alerting, and collaboration features.
-
-These topics are beyond the scope of this course, but the important thing is that the pipeline structure you built here is already very close to what real production systems use.
-
-The jump from:
-
-```bash id="6b6gk4"
-python etl_pipeline.py
-```
-
-to a scheduled production deployment is smaller than it looks.
+These topics are beyond the scope of this course, but the important point is that the pipeline structure you built here is already very close to what real production systems use. The jump from running a script locally to a scheduled deployment is smaller than it looks.
 
 ---
 
 You built a cloud ETL pipeline from scratch:
 
-* extract from a live API
-* transform with a language model
-* load to cloud storage
-* orchestrate with Prefect
-* monitor through a UI
-* recover gracefully from transient failures
+- Extract from a live API
+- Load raw data to a cloud database
+- Transform with an ML model and an LLM
+- Load enriched results back to the database
+- Orchestrate with Prefect
+- Monitor through a UI
+- Recover gracefully from transient failures
 
-That is Week 1 pipelines + Week 9 Blob Storage + Week 10 LLM transforms, all working together in a realistic workflow.
+That is Week 1 pipelines + Week 4 model persistence + Week 9 database writes + Week 10 double-transform, all working together in a realistic workflow.
