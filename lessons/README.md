@@ -4,9 +4,6 @@ As described on the [course home page](../README.md), Python 200 is organized in
 modules covering data analysis, machine learning, AI, and cloud computing. This page
 is your home base for the lessons themselves -- you will find links to content for each week below, and instructions for setting up your development environment further down.
 
-> This course assumes you have completed Python 100 and are comfortable with basic Python,
-> Git, and the command line.
-
 ## Lessons by week
 
 1. [Week 1: Introduction to Analysis](01_analysis_intro/README.md)
