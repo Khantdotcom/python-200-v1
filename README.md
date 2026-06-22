@@ -13,7 +13,7 @@ The course is organized into four modules:
 - **Module 1: Analysis** (Week 1): Review of Python 100, and introduction to data analysis and pipelines.
 - **Module 2: Machine Learning** (Weeks 2-4): Overview of machine learning, with hands-on regression, classification, and deep learning lessons.
 - **Module 3: AI** (Weeks 5-7): Introduction to large language models. Hands-on lessons on chatbots, augmentation of LLMs with new knowledge, and AI-based agents.
-- **Module 4: Cloud computing** (Weeks 8-11): An overview of cloud computing with Microsoft Azure. These include building an AI application, ML pipelines, and ETL pipelines in the cloud.
+- **Module 4: Cloud computing** (Weeks 8-11): An overview of cloud computing. These include building an AI application, ML pipelines, and ETL pipelines in the cloud.
 
 ## Getting started
 

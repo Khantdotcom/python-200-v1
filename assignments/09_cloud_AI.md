@@ -1,114 +1,115 @@
 # Week 9 Assignments
 
-This week you moved from the Azure Portal into Python. You learned how scripts authenticate to Azure, how to read and write files in Blob Storage, and how to build an Extract + Load pipeline that pulls data from a REST API and stores it in the cloud. The warmup checks your understanding of those concepts and gives you some practice with the SDK. The project has you build the pipeline end-to-end.
+This week you connected Python to a cloud database, learned to read and write rows with `supabase-py`, and built an Extract + Load pipeline that pulls weather data from the Open-Meteo API and stores it in Supabase. The warmup checks your understanding of those concepts and gives you practice with the SDK. The project has you build the pipeline end-to-end.
+
+---
 
 # Submission Instructions
 
 In your `python200-homework` repository, create a folder called `assignments_09/`. Inside that folder, create:
 
-1. `warmup_09.py` -- warmup exercises (conceptual answers as comments, code as functions)
-2. `project_09.py` -- the Extract + Load pipeline
-3. `outputs/` -- for any files you download from Blob Storage
+1. `warmup_09.py` — warmup exercises (conceptual answers as comments, code as runnable Python)
+2. `project_09.py` — the Extract + Load pipeline
+3. `.env` — your Supabase credentials (**add `.env` to your `.gitignore` before committing**)
 
 When finished, commit and open a PR as described in the [assignments README](README.md).
 
-**Setup reminder:** Make sure you have run `az login` in your terminal before running any of this week's scripts. All scripts in this assignment use `DefaultAzureCredential`, which relies on that session.
+**Setup reminder:** Make sure your `.env` file is present and your Supabase tables exist before running any scripts.
 
 ```bash
-uv pip install azure-identity azure-mgmt-resource azure-storage-blob requests pandas
+uv pip install supabase python-dotenv requests
 ```
+
+---
 
 # Part 1: Warmup
 
-Put all warmup answers in `warmup_09.py`. Use comments to mark each section and question (e.g., `# --- Azure Authentication ---` and `# Q1`). For conceptual questions, write your answer as a comment block. For code questions, write working Python functions.
+Put all warmup answers in `warmup_09.py`. Use comments to label each section and question (e.g., `# --- Supabase Connection ---` and `# Q1`). For conceptual questions, write your answer as a comment block. For code questions, write working Python that connects to your actual Supabase project.
 
-## Azure Authentication
+## Supabase Connection
 
-### Azure Authentication Question 1
+### Connection Question 1
 
-In a comment block, answer: when you run a Python script locally that uses `DefaultAzureCredential`, what does it rely on to authenticate? What command must you have run first, and how does `DefaultAzureCredential` know to use it?
+In a comment block, answer: what are the two pieces of information `supabase-py` needs to connect to your project? Where do you find them in the Supabase dashboard, and why should they never be hardcoded in a Python script?
 
-### Azure Authentication Question 2
+### Connection Question 2
 
-In a comment block, answer: why can't a deployed pipeline (running on an Azure VM or container) use `az login` for authentication? What does it use instead, and why does the same Python code work without changes?
+Write a function `get_client()` that:
+1. Loads your credentials from environment variables using `python-dotenv`
+2. Creates and returns a Supabase client
 
-### Azure Authentication Question 3
+The function should raise a clear error if either environment variable is missing.
 
-You run a script that creates a `DefaultAzureCredential` and immediately gets an `AuthenticationError`. In a comment block, describe the two most likely causes and how you would diagnose each.
+### Connection Question 3
 
-## Blob Storage
+In a comment block, answer: what is Row Level Security (RLS), and why did you disable it on your tables for this course? In what kind of real-world application would you want to keep it enabled?
 
-### Blob Storage Question 1
+## supabase-py CRUD
 
-In a comment block, describe the three-level hierarchy of Azure Blob Storage in your own words. Give a concrete analogy that maps each level to something familiar (a filesystem, a filing cabinet, etc.).
+### CRUD Question 1
 
-### Blob Storage Question 2
+Write a function `insert_test_record(supabase)` that inserts a single row into `weather_raw` with today's date and plausible values for all four weather columns. Run it to confirm it works, then add a comment: what would happen if you ran the function twice? How would you change the call to make it safe to run multiple times?
 
-For each scenario below, write one sentence in a comment block saying whether you would use Blob Storage or a relational database (like Azure SQL), and why.
+### CRUD Question 2
 
-- A REST API returns a JSON payload each hour. You need to store the raw responses for reprocessing later.
-- Your pipeline produces a table of 50 million customer transactions that your analytics team queries by date range and customer ID every day.
-- A computer vision model produces image embeddings as NumPy arrays. You need to save them between pipeline runs.
+Write a function `get_records_by_date_range(supabase, start, end)` that returns all rows from `weather_raw` where `date >= start` and `date <= end`. The function should return the list of row dictionaries. Test it with a date range that includes the row you inserted in Q1 and print the result.
 
-### Blob Storage Question 3
+### CRUD Question 3
 
-Write a function `list_container(container_client)` that prints the name and size (in bytes) of every blob in the container, one per line. The function should take a `ContainerClient` object as its only argument and return nothing.
+In a comment block, explain the difference between `insert` and `upsert` in `supabase-py`. Give a concrete example of when you would choose each. Then write a function `safe_upsert(supabase, records)` that upserts a list of records into `weather_raw` using `date` as the conflict key and prints the number of rows affected.
 
-### Blob Storage Question 4
+## Idempotency
 
-Write a function `upload_text(container_client, blob_name, text)` that encodes a Python string as UTF-8 and uploads it as a blob, overwriting any existing blob with the same name. The function should take a `ContainerClient`, a blob name string, and a text string, and return nothing.
+### Idempotency Question 1
 
-# Part 2: Project -- Extract + Load Pipeline
+"Idempotency" means that running an operation multiple times produces the same result as running it once. In a comment block, explain why idempotency matters for a data pipeline. Give one concrete example of what goes wrong in a non-idempotent pipeline when the script crashes halfway through and is restarted.
 
-Build `project_09.py`, a script that implements a complete Extract + Load pipeline using the Open-Meteo weather API and Azure Blob Storage.
+---
 
-## Setup
+# Part 2: Project — Extract + Load Pipeline
 
-At the top of your script, define these constants (fill in your own values):
+Build `project_09.py`, a script that implements a complete Extract + Load pipeline: it fetches 2023 daily weather data from the Open-Meteo API for a city of your choice and loads it into your Supabase `weather_raw` table.
 
-```python
-ACCOUNT_URL = "https://<your-account>.blob.core.windows.net"
-CONTAINER = "pipeline-data"
-```
-
-You will need to create the `pipeline-data` container in your storage account before running the script. You can do this in the Azure Portal: navigate to your storage account, click "Containers," and create a new container named `pipeline-data` with private access.
+This is the same data your Week 4 classifier was trained on. In later weeks, you will use these rows as the input to the transform step — so make sure your column values match what the model expects.
 
 ## Step 1: Extract
 
-Call the Open-Meteo API to retrieve 7 days of hourly weather data. Use the URL pattern below -- pick any city you like by substituting its latitude and longitude:
+Call the Open-Meteo historical archive API to retrieve daily weather data for your chosen city for the full year 2023 (start: `2023-01-01`, end: `2023-12-31`). Use these four daily variables:
 
-```text
-https://api.open-meteo.com/v1/forecast?latitude=<lat>&longitude=<lon>&hourly=temperature_2m,precipitation&forecast_days=7
-```
+- `temperature_2m_max`
+- `temperature_2m_min`
+- `precipitation_sum`
+- `wind_speed_10m_max`
 
-Charlotte, NC is `latitude=35.2271&longitude=-80.8431` if you want a default. Use `response.raise_for_status()` to catch errors early.
+Use `response.raise_for_status()` to catch errors early. Print a summary of the response once it arrives.
 
-## Step 2: Serialize
+## Step 2: Transform
 
-Convert the API response to JSON bytes using `json.dumps()` and `.encode("utf-8")`.
+Convert the API response from columnar format into a list of row dictionaries. Each dictionary should have keys that exactly match the column names in `weather_raw`.
+
+Print the first and last record to confirm the transformation looks correct. Add a comment: how many records do you expect for a full year, and how many did you get? If the numbers differ, what might explain the discrepancy?
 
 ## Step 3: Load
 
-Upload the serialized data to your container at the path `raw/<today>/weather.json`, where `<today>` is today's date in ISO format (use `date.today().isoformat()`). Use `overwrite=True`.
+Upsert all records into `weather_raw`. Print a confirmation message showing how many rows were upserted.
 
-Print a confirmation message showing the blob path and the number of bytes uploaded.
+Run the script a second time and confirm the row count in `weather_raw` does not change. Add a comment: what does this tell you about idempotency?
 
 ## Step 4: Verify
 
-List all blobs in the container and print each one's name and size.
+After upserting, run a verification query that:
+1. Prints the total number of rows in `weather_raw`
+2. Prints the earliest and latest dates in the table
+3. Prints the row for `2023-07-04` (or the nearest date if that date is missing)
 
-## Step 5: Read Back
-
-Download the blob you just uploaded. Parse the JSON and load the `"hourly"` field into a pandas DataFrame. Print the first 5 rows.
-
-Save the downloaded JSON to `outputs/weather_raw.json` so your mentor can inspect it without running the script.
+You can also verify directly in the Supabase Table Editor — take a screenshot for the video below.
 
 ## Video
 
 Record a short video (target: 3 minutes, max: 5). Show:
 
 1. The script running in your terminal with no errors
-2. The blob appearing in the Azure Portal (navigate to your storage account, then Containers, then `pipeline-data`)
-3. The DataFrame output printed to your terminal
+2. The `weather_raw` table in your Supabase dashboard with rows visible
+3. Your verification output printed to the terminal
 
 Paste the video link in a comment at the top of `project_09.py`.

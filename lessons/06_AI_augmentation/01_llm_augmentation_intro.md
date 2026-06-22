@@ -35,5 +35,3 @@ For more on prompt engineering, fine-tuning, and RAG, see the following:
 
 - [Article: RAG vs fine-tuning vs prompt engineering](https://www.k2view.com/blog/rag-vs-fine-tuning-vs-prompt-engineering/#RAG-vs-fine-tuning-vs-prompt-engineering-compared)
 - [Video: RAG vs fine-tuning vs Prompt engineering](https://www.youtube.com/watch?v=zYGDpG-pTho)
-
-

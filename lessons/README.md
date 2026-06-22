@@ -4,15 +4,12 @@ As described on the [course home page](../README.md), Python 200 is organized in
 modules covering data analysis, machine learning, AI, and cloud computing. This page
 is your home base for the lessons themselves -- you will find links to content for each week below, and instructions for setting up your development environment further down.
 
-> This course assumes you have completed Python 100 and are comfortable with basic Python,
-> Git, and the command line.
-
 ## Lessons by week
 
 1. [Week 1: Introduction to Analysis](01_analysis_intro/README.md)
 2. [Week 2: Introduction to Machine Learning](02_ML_intro/README.md)
 3. [Week 3: Classification](03_ML_classification/README.md)
-4. [Week 4: Deep Learning](04_ML_deep_learning/README.md)
+4. [Week 4: Applied ML](04_applied_ML/README.md)
 5. [Week 5: Introduction to AI and LLMs](05_AI_intro/README.md)
 6. [Week 6: Retrieval-Augmented Generation (RAG)](06_AI_augmentation/README.md)
 7. [Week 7: AI Agents](07_AI_agents/README.md)

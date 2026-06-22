@@ -1,6 +1,6 @@
 # RAG Implementation with LlamaIndex
 
-In the previous lessons, we looked at custom semantic RAG implementations that leveraged both an in-memory vector store and a persistent docker container-based vector store. Now we will implement the same semantic RAG frameworks as before using a library called [LlamaIndex](https://www.llamaindex.ai/). The workflow of a RAG framework in LlamaIndex is shown in the figure below. We will go through the individual elements in the flowchart as we look at the implementations in the following sections.
+In the previous lesson, you built a retrieval system using keyword matching — exact word overlap between a query and your documents. This lesson introduces semantic RAG, which searches by *meaning* rather than exact words. We will build it using [LlamaIndex](https://www.llamaindex.ai/), a framework that automates the steps a from-scratch implementation would require you to write yourself: loading documents, splitting them into chunks, generating embeddings, and building a searchable index. The workflow is shown in the figure below.
 
 ![LlamaIndex Workflow](resources/LlamaIndex.png)
 
@@ -27,15 +27,23 @@ Use cases:
 
 Here are some additional resources to look at: [Youtube video on introduction to LlamaIndex](https://www.youtube.com/watch?v=cCyYGYyCka4), [IBM article on LlamaIndex](https://www.ibm.com/think/topics/llamaindex).
 
+## What LlamaIndex Automates
 
-> **Note:** Make sure your environment has the following packages installed that are important for the current notebook: 
-> - `llama-index-core`:  the base library for llamaindex (make sure the llama-index-core version is 0.14.10)
-> - `llama-index-embeddings-openai`: support for OpenAI's embedding models
-> - `llama-index-vector-stores-postgres`: support for PostgreSQL-based vector datastores
-> - `psycopg2-binary`: connection library in Python to interact with the postgreSQL database
-> - `pypdf` and `python-dotenv`: for PDF and key loading
+Before writing any code, it helps to understand what LlamaIndex is doing on your behalf.
 
-We will first begin with an implementation of the in-memory semantic RAG framework. We will use the same Brightleaf Solar Company example as used in the previous lessons. Note that although LlamaIndex has support for FAISS, we will use LlamaIndex's internal functionality to search through the embeddings and retrieve the relevant context for a query. 
+**Chunking** is the process of splitting a long document into smaller, overlapping pieces. This matters because you rarely want to retrieve an entire document in response to a query — you want the most relevant *section*. LlamaIndex's default chunk size is 1024 tokens with 200 tokens of overlap between adjacent chunks. Chunk size is a tunable parameter: smaller chunks are more precise but may cut off context; larger chunks capture more surrounding text but may retrieve irrelevant content alongside what you need.
+
+**Embeddings** are dense numerical vectors that represent the meaning of a piece of text. An embedding model (in this course, OpenAI's `text-embedding-3-small`) reads a chunk and outputs a list of 1536 numbers. Chunks with similar meanings land near each other in this vector space. This is what allows semantic search to find a relevant chunk about "miles per gallon" in response to a query about "fuel efficiency" — no words overlap, but the embeddings are close. The closeness between two vectors is measured using **cosine similarity**, a number from -1 to 1 where scores near 1 indicate highly similar meaning.
+
+**Indexing** builds a searchable data structure over the chunk embeddings so that, at query time, the nearest chunks can be retrieved quickly. LlamaIndex's `VectorStoreIndex` handles chunking, embedding, and indexing automatically when you call `VectorStoreIndex.from_documents(docs)`. You can swap in a different vector store backend (including a persistent PostgreSQL database via pgvector — covered in the optional extension at the end of this lesson) without changing how you query.
+
+> **Note:** Install the following packages before running the code in this lesson:
+> ```bash
+> pip install "llama-index-core==0.14.10" llama-index-embeddings-openai pypdf python-dotenv
+> ```
+> The optional pgvector extension at the end of this lesson requires two additional packages (`llama-index-vector-stores-postgres` and `psycopg2-binary`) and Docker. You do not need them for the main lesson.
+
+We will use the same Brightleaf Solar Company example from the previous lessons. LlamaIndex's internal similarity search handles retrieval — no separate vector library required.
 
 ## In-memory Semantic RAG using LlamaIndex
 
@@ -77,7 +85,7 @@ index = VectorStoreIndex.from_documents(docs)
 
 > **Note**: Make sure the `brightleaf_pdfs` directory is in the appropriate location, you can additionally add an `assert` statement to check the existence of the directory if it is located elsewhere.
 
-Compared to the custom implementation from the semantic RAG lesson, the above two lines of code capture the document reading, chunking, embedding, and storing steps, demonstrating a huge reduction in lines of code! LlamaIndex uses the inbuilt `SimpleDirectoryReader` method to read the documents and store the metadata and text into the `docs` list (the "Read" block in the figure at the start of the lesson).  
+These two lines of code capture the document reading, chunking, embedding, and storing steps. LlamaIndex uses the inbuilt `SimpleDirectoryReader` method to read the documents and store the metadata and text into the `docs` list (the "Read" block in the figure at the start of the lesson).  
 
 <!-- Document: LlamaIndex’s core data structure that represents one source file (like a PDF) after it’s loaded.
 id_: A unique identifier automatically assigned to each document.
@@ -220,15 +228,23 @@ When creating the query engine, we define the number of retrieved chunks by sett
 
 Since we only want to augment the top 3 most relevant chunks, the response will only have 3 source nodes. As can be seen, the model is able to respond accurately and retrieve generally relevant chunks to each question.
 
-Congratulations! You've implemented a semantic RAG pipeline using Llamaindex, heavily reducing the total lines of code compared to the custom implementation in the previous lesson!
+Congratulations! You've implemented a semantic RAG pipeline using LlamaIndex in four lines of code.
 
-What makes this so powerful is how much work is wrapped into so little code. We only needed four lines to create our RAG framework. LlamaIndex is a fully maintained, widely used framework built by a dedicated team, and it bundles together a large amount of engineering that we would otherwise have to implement ourselves. The library handles chunking, embedding, vector storage, retrieval, ranking, and passing the right context to the LLM, all through a clean and consistent interface. Of course, a big reason for this reduction in lines of code is that LlamaIndex is designed to be a plug-and-play tool with many hyperparameters predefined. Changing these default values will increase some lines of code, but the overall reduction in code lines is still significant.
+What makes this so powerful is how much work is wrapped into so little code. LlamaIndex is a fully maintained, widely used framework that bundles chunking, embedding, vector storage, retrieval, ranking, and context injection into a clean and consistent interface. Changing defaults (chunk size, embedding model, `similarity_top_k`) will add a few lines, but the overall reduction compared to a from-scratch implementation remains significant.
 
-It also supports multiple RAG architectures beyond the simple naive semantic RAG architecture we show here, which makes it adaptable to different real-world use cases as projects grow. As an example, we will look at the implementation for the persistent database semantic RAG with pgvector and postgreSQL in LlamaIndex next. Additionally, LlamaIndex includes built-in tools for evaluating how well a RAG system is performing which we will look at later.
+LlamaIndex includes built-in tools for evaluating how well a RAG system is performing — we will look at those next. An optional extension at the end of this lesson covers swapping the in-memory store for a persistent PostgreSQL database using pgvector.
 
-## Persistent database semantic RAG using LlamaIndex
+## Optional Extension: Persistent Vector Store with pgvector
 
-LlamaIndex provides support to work with persistent databases using pgvector and postgreSQL through the `llama-index-vector-stores-postgres` package. As you will see, the package provides the functionality to store chunked and embedded documents into the database (emulated here using the same docker container as the previous lesson). As in the previous lesson, the docker image has postgreSQL with the pgvector extension installed. The llamaindex module doesn't directly use pgvector but relies on pgvector logic internally. While the docker container is the same, we will not use the `rag_chunks` table created in the previous lesson but we will have LlamaIndex create its own table. Before we begin with creating the vector store, make sure that your Postgres + pgvector docker container is running and reachable at `localhost:5432`. You can refer to the previous lesson to look at the procedure for starting/restarting your docker container.
+> **Prerequisites:** This section requires Docker installed and running on your machine, plus two additional packages:
+> ```bash
+> pip install llama-index-vector-stores-postgres psycopg2-binary
+> ```
+> If you do not have Docker, skip this section — the main lesson (in-memory RAG + evaluation) is complete. The assignment's Extension D covers this same material.
+
+The in-memory `SimpleVectorStore` used above disappears when your script stops — every restart requires re-embedding all documents from scratch. A persistent database solves this: embeddings are stored once and reused across sessions. This section walks through replacing `SimpleVectorStore` with a PostgreSQL database backed by pgvector, using the same LlamaIndex interface you already know.
+
+LlamaIndex provides support to work with persistent databases using pgvector and PostgreSQL through the `llama-index-vector-stores-postgres` package. LlamaIndex manages its own table — it does not share the `rag_chunks` table from any prior setup. Before starting, make sure your Postgres + pgvector Docker container is running and reachable at `localhost:5432`.
 
 <!-- This notebook is the "framework sequel" to the earlier RAG notebooks:
 
@@ -600,7 +616,7 @@ Recall that you're using pgvector to explicitly communicate with PostgreSQL in t
 
     Listed tables: [('rag_chunks',), ('data_li_brightleaf_pgvector',)]
 
-`rag_chunks` is the table from the previous lesson. In case you found duplicates of the `data_li_brightleaf_pgvector` table, you can drop one copy of the table using the following code.
+`rag_chunks` is a table from a prior setup, if present. In case you found duplicates of the `data_li_brightleaf_pgvector` table, you can drop one copy of the table using the following code.
 
 ```python
 # Optional reset: drop the LlamaIndex-managed table so you can rebuild cleanly
@@ -637,8 +653,6 @@ Additionally, here are some common issues you may face and how to solve them.
 - If you cannot connect to Postgres:
   - Confirm the Docker container is running.
   - Confirm the port mapping is `-p 5432:5432` (or update `PG_PORT`).
-
-Now that we saw how to create a semantic RAG framework using LlamaIndex, the last section in this lesson deals with evaluation of a RAG framework using LlamaIndex. 
 
 ## RAG Evaluation using LlamaIndex
 
@@ -723,5 +737,3 @@ Choices:
 <strong>Answer: A - Hallucinations</strong>  <br>
 The faithfulness metric represents whether the response is faithful to the retrieved contexts (i.e. whether the RAG framework hallucinates). The relevancy metric addresses off-topic rambling responses. Response conciseness is not addressed by any of the predefined metrics.
 </details>
-
-

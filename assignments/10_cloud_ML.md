@@ -1,134 +1,112 @@
 # Week 10 Assignments
 
-This week you learned to use an LLM as a data transformation step -- reading from Blob Storage, enriching records with a model call, and writing results back. You also saw how two lines of code separate the OpenAI API from Azure OpenAI, and why that distinction matters in enterprise environments.
+This week you built the Transform step of the pipeline: the ML classifier from Week 4 runs on each row in `weather_raw`, then an LLM adds a one-sentence recommendation, and the combined output goes into `weather_enriched`. The warmup checks your understanding of where ML and LLMs each belong and how they complement each other. The project has you build the complete double-transform end-to-end.
 
-The warmup checks your judgment about when LLMs belong in a pipeline and what makes Azure OpenAI different. The project has you build the Transform step end-to-end, connecting it to the Week 9 data you already have in Blob Storage.
+---
 
 # Submission Instructions
 
 In your `python200-homework` repository, create a folder called `assignments_10/`. Inside that folder, create:
 
-1. `warmup_10.py` -- warmup exercises (conceptual answers as comments, code as functions)
-2. `project_10.py` -- the LLM Transform pipeline
-3. `outputs/` -- save the first 10 enriched records here (see project details below)
+1. `warmup_10.py` — warmup exercises (conceptual answers as comments, code as runnable Python)
+2. `transform_10.py` — the complete double-transform pipeline
+3. `models/` — copy your `weather_classifier.pkl` and `weather_classifier_metadata.json` from Week 4 here
 
 When finished, commit and open a PR as described in the [assignments README](README.md).
 
-**Setup reminder:** You will need your OpenAI API key in a `.env` file (same setup as Weeks 5-7) and an active `az login` session for Blob Storage access.
+**Prerequisites:** Your Week 9 project must have run successfully and populated `weather_raw` in your Supabase project before you run this week's transform script.
 
 ```bash
-uv pip install openai python-dotenv azure-storage-blob azure-identity pandas
+uv pip install supabase python-dotenv joblib scikit-learn pandas openai
 ```
+
+---
 
 # Part 1: Warmup
 
-Put all warmup answers in `warmup_10.py`. Use comments to mark each section and question (e.g., `# --- LLMs as Transform ---` and `# Q1`). For conceptual questions, write your answer as a comment block. For code questions, write working Python.
+Put all warmup answers in `warmup_10.py`. Label each section and question with comments.
 
-## LLMs as Transform
+## ML vs. LLM in Pipelines
 
-### LLMs as Transform Question 1
+### ML/LLM Question 1
 
-For each task below, write a one-sentence comment saying whether you would use an LLM or deterministic code, and why.
+In a comment block, explain the difference between what the ML classifier produces and what the LLM produces in this week's pipeline. Why does each tool do what it does? What would go wrong if you tried to swap them — using the LLM to make the binary good/skip prediction and the ML model to write the recommendation?
 
-- Parse the string `"Jan 5th, 2024"` into an ISO date format like `"2024-01-05"`.
-- Classify a customer support ticket -- "my card was charged twice" -- into one of: billing, technical, or general.
-- Calculate the average of a list of numbers.
-- Extract the company name from a freeform job title like `"Sr. Data Eng @ Acme Corp (contract)"`.
-- Determine whether a product review is more than 100 words long.
+### ML/LLM Question 2
 
-### LLMs as Transform Question 2
+For each task below, write one sentence in a comment block stating whether you would use a trained ML model, an LLM, or deterministic code, and why:
 
-Your colleague has written the following pipeline prompt:
+- Converting a date string like `"2023-07-04"` to day-of-week
+- Classifying a job posting as "entry-level", "mid-level", or "senior" based on freeform text
+- Predicting customer churn given 15 numeric features and a labeled training dataset
+- Normalizing inconsistent city names ("NYC", "New York City", "New York, NY") to a canonical form
+- Summing a column of revenue figures
 
-```python
-system = "Summarize this product review in a few sentences."
-```
+### ML/LLM Question 3
 
-In a comment block, explain what problem this creates downstream in a pipeline, and rewrite the prompt so it produces output that is easy to parse and store reliably.
+In a comment block, answer: what is incremental processing, and why is it important for this pipeline? What would happen — in terms of cost and data correctness — if the transform script re-processed all 365 records every time it ran?
 
-### LLMs as Transform Question 3
+## Prompt Design
 
-Your dataset has 50,000 records and you need to run a classification call for each one using `gpt-4o-mini`. In a comment block, answer:
+### Prompt Question 1
 
-1. If each call takes 1 second on average, how long would sequential processing take?
-2. What is one practical strategy to handle this more efficiently at scale, without changing models?
+The lesson prompt asks the LLM for exactly one sentence. Write an alternative system prompt that asks for a two-sentence recommendation where the first sentence states the prediction and the second sentence explains the reasoning. In a comment, describe: what would you need to change in the validation logic to accommodate two sentences instead of one?
 
-## Azure OpenAI
+### Prompt Question 2
 
-### Azure OpenAI Question 1
+Write a function `call_with_retry(client, messages, max_retries=3)` that calls `client.chat.completions.create()` and retries up to `max_retries` times on any exception, with a 2-second wait between attempts. On final failure, return `None`. In a comment, describe when you would use this in a production pipeline.
 
-In a comment block, name two reasons an organization might use Azure OpenAI instead of calling the OpenAI API directly. Be specific -- "it's better" is not an answer.
+---
 
-### Azure OpenAI Question 2
+# Part 2: Project — The Double-Transform Pipeline
 
-When you switch from `OpenAI` to `AzureOpenAI`, the client initialization takes three Azure-specific parameters. In a comment block, name them and describe what each one is. (Do not include the standard `api_key` -- describe the Azure-specific ones.)
+Build `transform_10.py`, a script that reads from `weather_raw`, runs the ML classifier and LLM enrichment on each unprocessed record, and writes the results to `weather_enriched`.
 
-### Azure OpenAI Question 3
+## Step 1: Incremental Read
 
-In a comment block, answer: when using `AzureOpenAI`, the `model` parameter in `chat.completions.create()` does not take a value like `"gpt-4o-mini"`. What does it take instead, and where do you find the right value to use?
+Load the model metadata from your `models/weather_classifier_metadata.json` file. Fetch all rows from `weather_raw`. Fetch all dates already present in `weather_enriched`. Determine which records still need processing.
 
-# Part 2: Project -- LLM Transform Pipeline
+Print a summary: how many raw records exist, how many are already enriched, and how many will be processed this run.
 
-Build `project_10.py`, a script that reads your Week 9 weather data from Blob Storage, classifies each hourly record with an LLM, and writes the enriched results back.
+## Step 2: ML Transform
 
-## Setup
+Load `models/weather_classifier.pkl`. Build a DataFrame from the unprocessed records, selecting feature columns in the order specified by the metadata. Run `predict` and `predict_proba`. Build a list of enrichment records with `date`, `good_for_running`, and `confidence`.
 
-At the top of your script, define your constants (fill in your own values):
+Print a summary of the predictions: how many days were classified as good, and what is the confidence range?
 
-```python
-ACCOUNT_URL = "https://<your-account>.blob.core.windows.net"
-CONTAINER = "pipeline-data"
-```
+## Step 3: LLM Transform
 
-## Step 1: Read
+Design a system prompt and user message function that passes each day's weather features and ML prediction to `gpt-4o-mini`. For each enrichment record, call the API and add an `llm_summary` field with the one-sentence recommendation.
 
-Download the raw weather data you uploaded in Week 9 from `raw/<today>/weather.json`. Parse the JSON and reshape the `"hourly"` parallel lists into a list of per-hour record dictionaries (each with `"time"`, `"temperature_2m"`, and `"precipitation"`). If today's date doesn't match when you uploaded in Week 9, use the fallback dataset.
+Handle API errors gracefully: use a fallback string rather than crashing. Add a progress print every 50 records.
 
-If you did not complete Week 9, a fallback dataset is available at `assignments/resources/weather_raw.json` -- load it with `json.load()` and reshape it the same way.
+## Step 4: Load
 
-## Step 2: Transform
+Upsert all enrichment records into `weather_enriched`. Print the number of rows upserted.
 
-For each record, call the OpenAI API to classify the conditions as `good`, `marginal`, or `bad` for outdoor running, based on temperature and precipitation. Use this system prompt exactly (so your mentor can compare results):
+## Step 5: Verify
 
-```python
-SYSTEM_PROMPT = (
-    "You are classifying hourly weather conditions for outdoor running. "
-    "Given a temperature in Celsius and a precipitation amount in mm, "
-    "classify the conditions as exactly one of: good, marginal, or bad. "
-    "Reply with that one word only -- no punctuation, no explanation."
-)
-```
+Query `weather_enriched` and print:
+- The total number of rows
+- Five sample rows showing `date`, `good_for_running`, `confidence`, and `llm_summary`
+- The number of days classified as good for running
 
-The user message for each record should be: `"Temperature: <value>C, Precipitation: <value>mm"`.
-
-To keep costs and runtime manageable, process only the first 24 records (one day of hourly data). Add a fallback: if the model's response is not one of the three valid labels, store `"unknown"` instead.
-
-Print a progress message every 6 records so you can see it running.
-
-## Step 3: Write
-
-Upload the enriched records (with the new `"conditions"` field) to `processed/<today>/weather_classified.json` in Blob Storage. Use `overwrite=True`.
-
-## Step 4: Spot-Check
-
-Download the processed blob, load it into a pandas DataFrame, and print:
-- `df["conditions"].value_counts()`
-- The first 5 rows of the DataFrame
-
-## Step 5: Save Output
-
-Save the first 10 enriched records to `outputs/first_10_records.json` so your mentor can inspect the results without running the script.
+Add a comment: look at a few of the LLM summaries. Do they accurately reflect the weather features and the model's prediction? Pick one you think is particularly good and one that seems off — what might have caused the weaker one?
 
 ## Step 6: Reflect
 
-Add a comment block at the top of `project_10.py` (3-5 sentences) answering: was classifying weather conditions for outdoor running actually a good use of an LLM? Could deterministic code have done this better? What would you lose or gain by switching to a rule-based approach (e.g., "temperature > 10 and precipitation < 1 → good")?
+Add a comment block (at least 5–6 sentences) addressing:
+
+1. The ML classifier was trained on Charlotte, NC data. If you loaded weather data for a different city in Week 9, do you expect the classifier's predictions to be accurate? Why or why not?
+2. The LLM recommendations are generated from the model's prediction and the weather features. Does the LLM have any ability to "override" the classifier, or is it purely additive? What are the implications of that?
+3. If you ran this pipeline on 50,000 records instead of 365, what would be your main concern: cost, latency, or something else? How would you address it?
 
 ## Video
 
-Record a short video (target: 3 minutes, max: 5). Show:
+Record a short video (target: 3–4 minutes, max: 5). Show:
 
-1. The script running in your terminal with no errors
-2. The `value_counts()` output and first 5 rows printed to the terminal
-3. The processed blob appearing in the Azure Portal under `pipeline-data/processed/<date>/`
+1. The script running in your terminal with no errors and the progress output
+2. The `weather_enriched` table in your Supabase dashboard with rows visible
+3. A few printed sample rows showing the LLM recommendations
 
-Paste the video link in a comment at the top of `project_10.py`.
+Paste the video link in a comment at the top of `transform_10.py`.

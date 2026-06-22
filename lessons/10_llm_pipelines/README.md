@@ -1,19 +1,19 @@
 # Week 10: LLMs in Pipelines
 
-In Weeks 5 through 7, you used LLMs interactively -- building chatbots, augmenting them with retrieved knowledge, and wiring them into agents that could reason and act. In Week 9, you learned to store and retrieve data in Azure Blob Storage. This week you connect those two skills.
+In weeks 5 through 7, you used language models interactively — building chatbots, augmenting them with retrieved knowledge, and wiring them into agents. In week 9, you stored structured weather data in Supabase. This week you connect those two skills, and add a third: the saved ML classifier from week 4.
 
-The core idea is a shift in how you think about language models: not as a conversational partner, but as a data processing step. LLMs are remarkably good at certain transformation tasks -- classifying freeform text, extracting structured fields from messy data, normalizing inconsistent values -- that would be tedious or impossible to handle with deterministic code. When one of those tasks sits in the middle of a data pipeline, an LLM call is a legitimate engineering choice.
+The transform step you build this week is a **double transform**: first the weather classifier predicts whether each day's conditions are good for running, then an LLM generates a short natural-language recommendation explaining why. Both steps read from `weather_raw`; together they write to `weather_enriched`. The conceptual shift is treating both models — the sklearn Pipeline and the LLM — as data-processing components rather than interactive tools. You will be asked to articulate explicitly why the ML model handles the classification and the LLM handles the natural-language layer, not the other way around.
 
 ## Topics
 
-1. [LLMs as a Transform Step](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/10_llm_pipelines/01_llms_transform.md)
-Reframes the LLM skills from Weeks 5-7 for a pipeline context. Covers where LLMs belong in ETL, what kinds of tasks they handle well vs. poorly, the practical realities of cost and latency at scale, and how to design prompts that produce reliable, parseable output.
+1. [The Double-Transform Pattern](./01_double_transform.md)
+Frames the week conceptually. Covers where ML models and LLMs each belong in an ETL pipeline, what kinds of tasks they do well versus poorly, and how passing ML outputs (including confidence scores) into an LLM prompt enables richer, hedged recommendations. Also covers the prompt-design principles that apply when an LLM is a batch processing step rather than a conversational partner.
 
-2. [Transforming Blob Data with OpenAI](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/10_llm_pipelines/02_blob_data.md)
-The hands-on lesson. Reads the weather data you loaded in Week 9, applies an LLM classification step to each record, handles unexpected responses gracefully, writes enriched results back to a processed Blob Storage path, and spot-checks the output with pandas.
+2. [ML Inference on Database Records](./02_ml_inference.md)
+The hands-on ML step. Reads rows from `weather_raw`, loads the saved sklearn Pipeline from week 4, runs `predict` and `predict_proba` on each record, and handles incremental processing — skipping dates already present in `weather_enriched`. Ends with a set of enrichment records ready to pass to the LLM step.
 
-3. [Azure OpenAI: A Note for Production](https://github.com/Code-the-Dream-School/python-200/blob/main/lessons/10_llm_pipelines/03_Azure_OpenAI.md)
-A short reading lesson. Explains what Azure OpenAI is, why most enterprise environments use it instead of the public OpenAI API, and what two lines of code change when you make the switch. No hands-on exercise required.
+3. [LLM Enrichment and Writing to weather_enriched](./03_llm_enrichment.md)
+The hands-on LLM step. Designs a constrained prompt that receives each day's weather features, ML prediction, and confidence score, calls the OpenAI API, validates the response, and writes complete enrichment records to `weather_enriched`. Closes with a spot-check query to confirm the output looks right.
 
 ## Week 10 Assignments
 

@@ -1,243 +1,269 @@
 # Building the Pipeline
 
-You have already written all three pieces of this pipeline. In Week 9 you extracted data from the Open-Meteo API and loaded it to Blob Storage. In Week 10 you read that data back, classified it with OpenAI, and wrote enriched results to a processed path. This lesson wires those pieces into a single Prefect flow.
+You have already written all the pieces of this pipeline. In Week 9 you extracted weather data from Open-Meteo and loaded it into `weather_raw`. In Week 10 you read those rows back, classified them with the ML model from Week 4, enriched each prediction with an LLM recommendation, and wrote the results to `weather_enriched`. This lesson wires all of it into a single Prefect flow.
 
-At this point, the main goal is not learning brand-new concepts -- it is learning how the pieces connect together into a real workflow. This is much closer to how production data pipelines are structured in practice.
+At this point, the main goal is not learning brand-new concepts — it is learning how the pieces connect into a real workflow. This is much closer to how production data pipelines are structured in practice.
 
 For reference:
 
-* [Prefect tasks documentation](https://docs.prefect.io/v3/concepts/tasks)
-* [Week 9: Loading Pipeline Data to Blob Storage](../09_cloud_data/03_loading_pipeline.md)
-* [Week 10: Transforming Blob Data with OpenAI](../10_llm_pipelines/02_blob_data.md)
+- [Prefect tasks documentation](https://docs.prefect.io/v3/concepts/tasks)
+- [Week 9: The Extract + Load Pipeline](../09_cloud_data/03_loading_pipeline.md)
+- [Week 10: ML Inference on Database Records](../10_llm_pipelines/02_ml_inference.md)
+- [Week 10: LLM Enrichment and Writing to weather_enriched](../10_llm_pipelines/03_llm_enrichment.md)
 
 ## Learning Objectives
 
 By the end of this lesson, you will be able to:
 
-* Implement extract, transform, and load as Prefect tasks using real cloud operations
-* Wire the three tasks into a `@flow` and run the complete pipeline
-* Read a Prefect UI run to confirm success or identify a failure
+- Implement extract, load_raw, transform, and load_enriched as Prefect tasks using real cloud operations
+- Wire the four tasks into a `@flow` and run the complete pipeline end-to-end
+- Read a Prefect UI run to confirm success or identify a failure
 
 ## Setup
 
-This pipeline requires all the packages from Weeks 9 and 10:
+This pipeline requires packages from Weeks 9 and 10:
 
 ```bash
-uv pip install prefect requests openai python-dotenv azure-storage-blob azure-identity pandas
+uv pip install prefect requests openai python-dotenv supabase joblib scikit-learn pandas
 ```
 
-Load your `.env` file and define your constants at the top of the script:
+Your `models/weather_classifier.pkl` and `models/weather_classifier_metadata.json` files from Week 4 must be present in the directory where you run the script.
+
+Define your shared constants and clients at the top of the script. The Supabase and OpenAI clients are initialized once and passed into tasks via closure — they do not need to be recreated on every task call:
 
 ```python
 import os
+import json
 from dotenv import load_dotenv
+from supabase import create_client
+from openai import OpenAI
 
 load_dotenv()
 
-ACCOUNT_URL = "https://<your-account>.blob.core.windows.net"
-CONTAINER = "pipeline-data"
-MAX_RECORDS = 24  # process one day of hourly data
+supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+with open("models/weather_classifier_metadata.json") as f:
+    metadata = json.load(f)
+FEATURES = metadata["features"]
 
 SYSTEM_PROMPT = (
-    "You are classifying hourly weather conditions for outdoor running. "
-    "Given a temperature in Celsius and a precipitation amount in mm, "
-    "classify the conditions as exactly one of: good, marginal, or bad. "
-    "Reply with that one word only -- no punctuation, no explanation."
+    "You are writing a one-sentence running recommendation for a daily weather summary app. "
+    "You will receive weather conditions for a single day and a machine learning prediction "
+    "about whether the day is good for running. "
+    "Write exactly one sentence — direct, practical, and specific to the conditions. "
+    "Do not use bullet points, headers, or phrases like 'Based on the data'."
 )
-
-VALID_LABELS = {"good", "marginal", "bad"}
 ```
-
-Keeping shared constants near the top of the file makes the pipeline easier to configure and maintain. In production systems, values like API endpoints, container names, and model names are often centralized this way.
 
 ## The Extract Task
 
-The extract task calls the Open-Meteo API and returns the raw JSON response. Adding `retries=2` means Prefect will automatically retry the task up to twice if it raises an exception -- useful since API calls can fail transiently:
+The extract task calls the Open-Meteo historical archive API and returns a list of row dictionaries, one per day. Adding `retries=2` means Prefect will automatically retry up to twice if the request fails — useful since API calls can fail transiently:
 
 ```python
 import requests
 from prefect import task
 
-@task(retries=2, retry_delay_seconds=10)
-def extract(latitude: float, longitude: float) -> dict:
-    url = (
-        f"https://api.open-meteo.com/v1/forecast"
-        f"?latitude={latitude}&longitude={longitude}"
-        f"&hourly=temperature_2m,precipitation"
-        f"&forecast_days=7"
-    )
+LATITUDE  = 35.23
+LONGITUDE = -80.84
 
-    response = requests.get(url)
+@task(retries=2, retry_delay_seconds=10)
+def extract() -> list:
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    params = {
+        "latitude":   LATITUDE,
+        "longitude":  LONGITUDE,
+        "start_date": "2023-01-01",
+        "end_date":   "2023-12-31",
+        "daily": FEATURES,
+        "timezone": "America/New_York",
+    }
+    response = requests.get(url, params=params)
     response.raise_for_status()
 
-    print(f"Extracted forecast data for ({latitude}, {longitude})")
-    return response.json()
+    daily = response.json()["daily"]
+    records = [
+        {
+            "date":               daily["time"][i],
+            "temperature_2m_max": daily["temperature_2m_max"][i],
+            "temperature_2m_min": daily["temperature_2m_min"][i],
+            "precipitation_sum":  daily["precipitation_sum"][i],
+            "wind_speed_10m_max": daily["wind_speed_10m_max"][i],
+        }
+        for i in range(len(daily["time"]))
+    ]
+
+    print(f"Extracted {len(records)} daily records from Open-Meteo")
+    return records
 ```
 
-Notice that the task itself stays fairly small and focused: one responsibility, one output. This is a common design principle in orchestration systems like Prefect and Airflow.
+One task, one responsibility: fetch the data and return it. The task does not know where it came from or where it is going — that is the flow's job.
+
+## The Load Raw Task
+
+The load_raw task upserts the raw records into `weather_raw`. Using `upsert` with `on_conflict="date"` makes it idempotent — re-running the pipeline does not duplicate rows:
+
+```python
+@task(retries=2, retry_delay_seconds=5)
+def load_raw(records: list) -> None:
+    response = (
+        supabase.table("weather_raw")
+        .upsert(records, on_conflict="date")
+        .execute()
+    )
+    print(f"Upserted {len(response.data)} rows into weather_raw")
+```
+
+This task must complete before the transform task runs — the ML classifier's incremental check queries `weather_enriched`, not `weather_raw`, so there is no strict ordering dependency between the two load steps. But logically, raw data should be persisted before transformation begins. The sequential flow structure enforces this naturally.
 
 ## The Transform Task
 
-The transform task reads the raw API response, reshapes the parallel lists into individual records, and classifies each one with the OpenAI API. Initializing the OpenAI client inside the task keeps the task self-contained:
+The transform task encapsulates the double-transform from Week 10: ML inference followed by LLM enrichment. Structuring it as a single task keeps the flow clean while still making the two internal stages explicit through comments and print statements:
 
 ```python
-from openai import OpenAI
+import joblib
+import pandas as pd
 from prefect import task
 
 @task
-def transform(data: dict, max_records: int) -> list:
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+def transform(raw_records: list) -> list:
+    # --- Incremental check ---
+    already_done = {
+        r["date"]
+        for r in supabase.table("weather_enriched").select("date").execute().data
+    }
+    to_process = [r for r in raw_records if r["date"] not in already_done]
+    print(f"Records to transform: {len(to_process)} (skipping {len(already_done)} already enriched)")
 
-    hourly = data["hourly"]
+    if not to_process:
+        print("All records already enriched — nothing to do.")
+        return []
 
-    records = []
-    for i in range(min(max_records, len(hourly["time"]))):
-        records.append({
-            "time": hourly["time"][i],
-            "temperature_2m": hourly["temperature_2m"][i],
-            "precipitation": hourly["precipitation"][i],
-        })
+    # --- ML classify ---
+    clf = joblib.load("models/weather_classifier.pkl")
+    df  = pd.DataFrame(to_process)
+    X   = df[FEATURES]
 
-    enriched = []
+    predictions   = clf.predict(X)
+    probabilities = clf.predict_proba(X)[:, 1]
 
-    for i, record in enumerate(records):
-        user_msg = (
-            f"Temperature: {record['temperature_2m']}C, "
-            f"Precipitation: {record['precipitation']}mm"
+    print(f"ML classification complete. Good days: {int(predictions.sum())} / {len(predictions)}")
+
+    enrichment_records = [
+        {
+            "date":             to_process[i]["date"],
+            "good_for_running": bool(predictions[i]),
+            "confidence":       round(float(probabilities[i]), 4),
+            "llm_summary":      None,
+        }
+        for i in range(len(to_process))
+    ]
+
+    # --- LLM enrich ---
+    for i, record in enumerate(enrichment_records):
+        raw_row = to_process[i]
+        prediction_text = "good for running" if record["good_for_running"] else "not ideal for running"
+        user_message = (
+            f"Date: {raw_row['date']}\n"
+            f"High: {raw_row['temperature_2m_max']}°C, Low: {raw_row['temperature_2m_min']}°C\n"
+            f"Precipitation: {raw_row['precipitation_sum']} mm\n"
+            f"Max wind speed: {raw_row['wind_speed_10m_max']} km/h\n"
+            f"Model prediction: {prediction_text} (confidence: {record['confidence']:.0%})"
         )
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user",   "content": user_message},
+                ],
+                max_tokens=100,
+            )
+            record["llm_summary"] = response.choices[0].message.content.strip() or "Recommendation unavailable."
+        except Exception as e:
+            print(f"  LLM error on {record['date']}: {e}")
+            record["llm_summary"] = "Recommendation unavailable."
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ]
-        )
+        if (i + 1) % 50 == 0:
+            print(f"  LLM enriched {i + 1} / {len(enrichment_records)} records")
 
-        raw_label = response.choices[0].message.content.strip().lower()
-        label = raw_label if raw_label in VALID_LABELS else "unknown"
-
-        enriched.append({**record, "conditions": label})
-
-        if (i + 1) % 6 == 0:
-            print(f"  Classified {i + 1}/{len(records)} records")
-
-    print(f"Transform complete: {len(enriched)} records enriched")
-    return enriched
+    print(f"Transform complete: {len(enrichment_records)} records enriched")
+    return enrichment_records
 ```
 
-There are several production-style patterns worth noticing here:
+Several production patterns are present here:
 
-* The task reshapes the data before processing it, making later logic simpler.
-* The prompt constrains the model output to a small set of expected labels.
-* The `"unknown"` fallback prevents one malformed response from crashing the entire pipeline.
-* Progress logs make long-running tasks easier to monitor in the Prefect UI.
+- The incremental check means re-running the flow on data already transformed does no extra work — and no extra LLM cost.
+- `clf.predict` and `clf.predict_proba` are called once on the full DataFrame, not in a loop. Batch inference is significantly faster than record-by-record inference.
+- LLM failures are caught and replaced with a fallback string rather than crashing the task.
+- Progress logs every 50 records make long-running transforms easy to follow in the Prefect UI.
 
-In a production environment with Azure OpenAI, swap `OpenAI` for `AzureOpenAI` using the two-line change from [Week 10, Lesson 3](../10_llm_pipelines/03_Azure_OpenAI.md).
+## The Load Enriched Task
 
-## The Load Task
-
-The load task uploads the enriched records to Blob Storage. The `ContainerClient` is initialized inside the task for the same reason as the OpenAI client -- self-contained tasks are easier to test and reason about:
+The final task upserts the enrichment records into `weather_enriched`:
 
 ```python
-import json
-from azure.storage.blob import ContainerClient
-from azure.identity import DefaultAzureCredential
-from prefect import task
+@task(retries=2, retry_delay_seconds=5)
+def load_enriched(enrichment_records: list) -> None:
+    if not enrichment_records:
+        print("No new enrichment records to load.")
+        return
 
-@task
-def load(records: list, blob_path: str) -> None:
-    credential = DefaultAzureCredential()
-
-    container = ContainerClient(
-        ACCOUNT_URL,
-        CONTAINER,
-        credential=credential
+    response = (
+        supabase.table("weather_enriched")
+        .upsert(enrichment_records, on_conflict="date")
+        .execute()
     )
-
-    payload = json.dumps(records).encode("utf-8")
-
-    container.upload_blob(
-        blob_path,
-        payload,
-        overwrite=True
-    )
-
-    print(f"Loaded {len(payload)} bytes to {blob_path}")
+    print(f"Upserted {len(response.data)} rows into weather_enriched")
 ```
 
-`overwrite=True` is important because pipelines often get re-run after failures or bug fixes. Without it, a second run could fail simply because the blob already exists.
+The guard on `not enrichment_records` handles the case where the transform task found nothing to process — the task exits cleanly rather than sending an empty upsert to the database.
 
 ## Wiring the Flow
 
-The flow calls the three tasks in order and constructs the blob path from today's date:
-
 ```python
-from datetime import date
 from prefect import flow
 
 @flow(log_prints=True)
-def etl_pipeline(
-    latitude: float = 35.2271,
-    longitude: float = -80.8431
-):
-    today = date.today().isoformat()
-
-    blob_path = f"final/{today}/weather_etl.json"
-
-    data = extract(latitude, longitude)
-
-    enriched = transform(
-        data,
-        max_records=MAX_RECORDS
-    )
-
-    load(enriched, blob_path)
-
-    print(f"Pipeline complete. Results at {blob_path}")
+def etl_pipeline():
+    raw_records        = extract()
+    load_raw(raw_records)
+    enrichment_records = transform(raw_records)
+    load_enriched(enrichment_records)
+    print("Pipeline complete.")
 
 if __name__ == "__main__":
     etl_pipeline()
 ```
 
-`log_prints=True` on the flow means every `print()` call in the flow and its tasks is captured as a Prefect log entry. You will see these in the Prefect UI alongside the task state transitions.
-
-This flow structure is intentionally simple:
-
-1. Extract raw data
-2. Transform/enrich it
-3. Load the result
-
-That Extract → Transform → Load pattern is the foundation of many real-world data engineering systems.
+The flow is five lines. Each task call is one line. The data dependencies — what each task returns and what the next task receives — are visible at a glance. This is the characteristic shape of a well-structured Prefect flow: the orchestration logic is minimal; the work happens inside the tasks.
 
 ## Running the Pipeline
 
-Make sure the Prefect server is running in one terminal:
+Start the Prefect UI in one terminal:
 
 ```bash
 prefect server start
 ```
 
-Then run the pipeline in a second terminal:
+Run the pipeline in a second terminal:
 
 ```bash
 python etl_pipeline.py
 ```
 
-You should see Prefect's output in the terminal as each task starts and completes. The full run typically takes 1-3 minutes, depending on OpenAI response times.
+On the first run, you should see:
+1. The extract task fetch 365 records
+2. The load_raw task upsert them into `weather_raw`
+3. The transform task classify all 365 and enrich them with LLM recommendations (this takes several minutes — each LLM call is ~1 second)
+4. The load_enriched task upsert them into `weather_enriched`
 
-The transform step will usually take the longest because it makes multiple sequential API calls. That delay is normal and becomes an important scaling consideration in larger pipelines.
+The transform step is the longest by far. Progress prints every 50 records give you visibility while it runs.
 
 ## Reading the Prefect UI
 
-Open `http://localhost:4200` and click into the `etl-pipeline` run. A successful run shows all three tasks in *Completed* state. Click any task to see its logs -- you should see the print statements from each task captured there.
+Open `http://localhost:4200` and click into the `etl-pipeline` run. A successful run shows all four tasks in *Completed* state. Click any task to see its logs — you should see the print statements from each task captured there.
 
-If a task fails, it shows in *Failed* state (red). Click the failed task and open the *Logs* tab to find the exception traceback. The other tasks that completed successfully remain green, so you can see exactly where in the pipeline the failure occurred without re-running the whole thing.
+If a task fails, it shows in *Failed* state (red). Click the failed task and open the *Logs* tab to find the exception traceback. Tasks that completed successfully remain green, so you can see exactly where in the pipeline the failure occurred without re-running the whole thing.
 
-One useful habit while learning orchestration tools is intentionally causing small failures and observing how the system responds. For example:
-
-* pass an invalid latitude
-* temporarily remove your `.env` API key
-* change the blob container name to something invalid
-
-Reading failed runs is a real engineering skill, and Prefect's UI is designed to make debugging easier.
+A useful exercise: cause a small failure intentionally and observe how the UI responds. For example, temporarily remove your `SUPABASE_KEY` from `.env`, run the pipeline, and read the failure trace. Then restore the key and re-run — the incremental check means you pick up from where you left off, not from the beginning.

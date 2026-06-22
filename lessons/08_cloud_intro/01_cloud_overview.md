@@ -2,7 +2,7 @@
 
 Over the past seven weeks you've built machine learning models, worked with data pipelines, and built AI tools -- all on your local machine.
 
-This week you'll start learning about **cloud computing**, which is where a lot of that work happens in practice in industry. This lesson gives you the conceptual foundation: what the cloud is, why it exists, and how it's organized. The lessons that follow will provide hands-on practice with **Azure**, a popular cloud computing platform.
+This week you'll start learning about **cloud computing**, which is where a lot of that work happens in practice in industry. This lesson gives you the conceptual foundation: what the cloud is, why it exists, and how it's organized.
 
 Think back to the last time a major app went down -- Netflix on a holiday weekend, or your bank's website on a busy shopping day. These outages make headlines partly because they're rare, and they're rare because large services run on infrastructure designed to scale and recover automatically: the cloud. The cloud has become the default environment for building and running data-intensive software, and understanding why is a good place to start.
 
